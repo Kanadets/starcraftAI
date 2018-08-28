@@ -2,14 +2,16 @@ import sc2
 from sc2 import run_game, maps, Race, Difficulty
 from sc2.player import Bot, Computer
 from sc2.constants import NEXUS, PROBE, PYLON, ASSIMILATOR, GATEWAY, \
- CYBERNETICSCORE, STALKER, STARGATE, VOIDRAY
+ CYBERNETICSCORE, STARGATE, VOIDRAY
 import random
+import cv2
+import numpy as np
 
 
 class SentdeBot(sc2.BotAI):
     def __init__(self):
         self.ITERATIONS_PER_MINUTE = 165
-        self.MAX_WORKERS = 700
+        self.MAX_WORKERS = 70
 
     async def on_step(self, iteration):
         self.iteration = iteration
@@ -20,14 +22,31 @@ class SentdeBot(sc2.BotAI):
         await self.expand()
         await self.offensive_force_buildings()
         await self.build_offensive_force()
+        await self.intel()
         await self.attack()
+
+    async def intel(self):
+        # for game_info: https://github.com/Dentosal/python-sc2/blob/master/sc2/game_info.py#L162
+        # print(self.game_info.map_size)
+        # flip around. It's y, x when you're dealing with an array.
+        game_data = np.zeros((self.game_info.map_size[1], self.game_info.map_size[0], 3), np.uint8)
+        for nexus in self.units(NEXUS):
+            nex_pos = nexus.position
+            print(nex_pos)
+            cv2.circle(game_data, (int(nex_pos[0]), int(nex_pos[1])), 10, (0, 255, 0), -1)  # BGR
+
+        # flip horizontally to make our final fix in visual representation:
+        flipped = cv2.flip(game_data, 0)
+        resized = cv2.resize(flipped, dsize=None, fx=2, fy=2)
+
+        cv2.imshow('Intel', resized)
+        cv2.waitKey(1)
 
     async def build_workers(self):
         if (len(self.units(NEXUS)) * 16) > len(self.units(PROBE)) and len(self.units(PROBE)) < self.MAX_WORKERS:
             for nexus in self.units(NEXUS).ready.noqueue:
                 if self.can_afford(PROBE):
                     await self.do(nexus.train(PROBE))
-
 
     async def build_pylons(self):
         if self.supply_left < 5 and not self.already_pending(PYLON):
@@ -53,7 +72,6 @@ class SentdeBot(sc2.BotAI):
             await self.expand_now()
 
     async def offensive_force_buildings(self):
-        #print(self.iteration / self.ITERATIONS_PER_MINUTE)
         if self.units(PYLON).ready.exists:
             pylon = self.units(PYLON).ready.random
 
@@ -61,21 +79,16 @@ class SentdeBot(sc2.BotAI):
                 if self.can_afford(CYBERNETICSCORE) and not self.already_pending(CYBERNETICSCORE):
                     await self.build(CYBERNETICSCORE, near=pylon)
 
-            elif len(self.units(GATEWAY)) < ((self.iteration / self.ITERATIONS_PER_MINUTE)/2):
+            elif len(self.units(GATEWAY)) < 1:
                 if self.can_afford(GATEWAY) and not self.already_pending(GATEWAY):
                     await self.build(GATEWAY, near=pylon)
 
             if self.units(CYBERNETICSCORE).ready.exists:
-                if len(self.units(STARGATE)) < ((self.iteration / self.ITERATIONS_PER_MINUTE)/2):
+                if len(self.units(STARGATE)) < (self.iteration / self.ITERATIONS_PER_MINUTE):  # this too
                     if self.can_afford(STARGATE) and not self.already_pending(STARGATE):
                         await self.build(STARGATE, near=pylon)
 
     async def build_offensive_force(self):
-        for gw in self.units(GATEWAY).ready.noqueue:
-            if not self.units(STALKER).amount > self.units(VOIDRAY).amount:
-                if self.can_afford(STALKER) and self.supply_left > 0:
-                    await self.do(gw.train(STALKER))
-
         for sg in self.units(STARGATE).ready.noqueue:
             if self.can_afford(VOIDRAY) and self.supply_left > 0:
                 await self.do(sg.train(VOIDRAY))
@@ -90,19 +103,14 @@ class SentdeBot(sc2.BotAI):
 
     async def attack(self):
         # {UNIT: [n to fight, n to defend]}
-        aggressive_units = {STALKER: [15, 5],
-                            VOIDRAY: [8, 3]}
-
+        aggressive_units = {
+                            #STALKER: [15, 5],
+                            VOIDRAY: [8, 3],
+                            }
 
         for UNIT in aggressive_units:
-            if self.units(UNIT).amount > aggressive_units[UNIT][0] and self.units(UNIT).amount > aggressive_units[UNIT][1]:
-                for s in self.units(UNIT).idle:
-                    await self.do(s.attack(self.find_target(self.state)))
-
-            elif self.units(UNIT).amount > aggressive_units[UNIT][1]:
-                if len(self.known_enemy_units) > 0:
-                    for s in self.units(UNIT).idle:
-                        await self.do(s.attack(random.choice(self.known_enemy_units)))
+            for s in self.units(UNIT).idle:
+                await self.do(s.attack(self.find_target(self.state)))
 
 
 run_game(maps.get("AbyssalReefLE"), [
